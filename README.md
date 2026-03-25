@@ -16,8 +16,8 @@ Cloudflare Edge
    │  Encrypted tunnel (outbound-initiated)
    ▼
 cloudflared ──────────────────────────────────────────┐
-                                                       │  http://n8n-main:5678
-n8n-network (bridge)                                   │
+                                                      │  http://n8n-main:5678
+n8n-network (bridge)                                  │       |
    ├── n8n-main          (ports 5678, 5679 — internal only) ◄─┘
    ├── n8n-runners       (connects to n8n-main:5679 via WebSocket)
    └── cloudflared       (outbound to Cloudflare edge only)
@@ -45,9 +45,9 @@ The patcher solves this by modifying the config file directly using Python's `js
 
 ## Prerequisites
 
-- Docker Engine with the Compose plugin (`docker compose` v2)
+- Docker Engine with the Compose plugin
 - A domain managed by Cloudflare
-- A Cloudflare Zero Trust account (free tier is sufficient)
+- A Cloudflare Zero Trust account
 
 ---
 
@@ -80,7 +80,7 @@ CLOUDFLARE_TUNNEL_TOKEN=<token from Cloudflare Zero Trust dashboard>
 
 ### 4. Place the compose file
 
-Copy `docker-compose.yml` to `/root/n8n/docker-compose.yml`.
+Copy `compose.yml` to `/root/n8n/compose.yml`.
 
 ### 5. Build and start
 
