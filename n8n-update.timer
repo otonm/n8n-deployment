@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly n8n container update — every Saturday at 02:00 local time
+Requires=n8n-update.service
+
+[Timer]
+OnCalendar=Sat *-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

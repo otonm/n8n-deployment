@@ -1,0 +1,130 @@
+services:
+  n8n-main:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM n8nio/n8n:latest
+        USER root
+        COPY --from=alpine:latest /sbin/apk /sbin/apk
+        COPY --from=alpine:latest /usr/lib/libapk.so* /usr/lib/
+        RUN apk add --update --no-cache bash curl ffmpeg
+        USER node
+    image: n8n-ffmpeg
+    pull_policy: never
+    container_name: n8n-main
+    restart: always
+    expose:
+      - "5678"
+      - "5679"
+    environment:
+      - GENERIC_TIMEZONE=Europe/Zurich
+      - TZ=Europe/Zurich
+      - N8N_HOST=n8n.mahnic.org
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_TRUST_PROXY=true
+      - N8N_RUNNERS_MODE=external
+      - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN}
+      - N8N_RUNNERS_BROKER_LISTEN_ADDRESS=0.0.0.0
+      - N8N_NATIVE_PYTHON_RUNNER=true
+      - WEBHOOK_URL=https://n8n.mahnic.org
+      - N8N_DEFAULT_BINARY_DATA_MODE=filesystem
+      - N8N_RUNNERS_ENABLED_TASK_TYPES=javascript,python
+      - N8N_SKIP_AUTH_ON_OAUTH_CALLBACK=true
+      - N8N_PROXY_HOPS=1
+    volumes:
+      - /root/n8n/data:/home/node/.n8n
+      - /root/n8n/work:/home/node/Work
+      - /mnt/n8n:/storage
+    networks:
+      - n8n-network
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -sf http://localhost:5678/healthz && curl -sf http://localhost:5679/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+
+  n8n-config-patcher:
+    image: n8nio/runners:latest
+    container_name: n8n-config-patcher
+    restart: no
+    user: root
+    entrypoint: ["/opt/runners/task-runner-python/.venv/bin/python", "-c"]
+    volumes:
+      - /root/n8n/config:/host-config
+    command:
+      - |
+        import json, shutil
+        shutil.copy('/etc/n8n-task-runners.json', '/host-config/n8n-task-runners.json')
+        with open('/host-config/n8n-task-runners.json') as f:
+            cfg = json.load(f)
+        for runner in cfg.get('task-runners', []):
+            rt = runner.get('runner-type', '')
+            overrides = runner.setdefault('env-overrides', {})
+            allowed   = runner.setdefault('allowed-env', [])
+            if rt == 'javascript':
+                overrides['NODE_FUNCTION_ALLOW_BUILTIN'] = '*'
+                overrides['NODE_FUNCTION_ALLOW_EXTERNAL'] = '*'
+            elif rt == 'python':
+                overrides['N8N_RUNNERS_STDLIB_ALLOW']   = '*'
+                overrides['N8N_RUNNERS_EXTERNAL_ALLOW'] = '*'
+                if 'PYTHONPATH' not in allowed:
+                    allowed.append('PYTHONPATH')
+        with open('/host-config/n8n-task-runners.json', 'w') as f:
+            json.dump(cfg, f, indent=2)
+        print('Patched runners config')
+
+  n8n-runners:
+    image: n8nio/runners:latest
+    container_name: n8n-runners
+    restart: always
+    environment:
+      - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN}
+      - N8N_RUNNERS_TASK_BROKER_URI=http://n8n-main:5679
+      - N8N_RUNNERS_ENABLED_TASK_TYPES=javascript,python
+      - N8N_RUNNERS_MAX_CONCURRENCY=10
+      - PYTHONPATH=/opt/runners/task-runner-python
+    volumes:
+      - /root/n8n/config/n8n-task-runners.json:/etc/n8n-task-runners.json:ro
+    networks:
+      - n8n-network
+    depends_on:
+      n8n-config-patcher:
+        condition: service_completed_successfully
+      n8n-main:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "require('http').get('http://localhost:5680/healthz', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: always
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - n8n-network
+    depends_on:
+      n8n-main:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "--metrics", "localhost:2000", "ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+networks:
+  n8n-network:
+    driver: bridge
